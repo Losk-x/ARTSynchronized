@@ -18,12 +18,14 @@ namespace ART_unsynchronized {
     }
 
     N *N::getAnyChild(const N *node) {
+        //Losk: 下面的各个Node实现上略有不同, N16不用保持有序, 所以如果没有Child就返回children[0], 其他则得注意别返回NULL?
+        //似乎是这样的, 但还没细看N16的具体实现
         switch (node->getType()) {
             case NTypes::N4: {
                 auto n = static_cast<const N4 *>(node);
                 return n->getAnyChild();
             }
-            case NTypes::N16: {
+            case NTypes::N16: { 
                 auto n = static_cast<const N16 *>(node);
                 return n->getAnyChild();
             }
@@ -83,6 +85,9 @@ namespace ART_unsynchronized {
     }
 
     void N::insertA(N *node, N *parentNode, uint8_t keyParent, uint8_t key, N *val) {
+        //Losk!: 才意识到一个非常重要的抉择,就是如何实现insertGrow
+        //实现方式1: 不改变node, 只是node内部结构的替换. 即指向node的指针可以不用修改, 类似的有LIPP. 这种情况似乎更适合OLC, 但难以实现ROWEX
+        //实现方式2: 改变node, 同时需要修改parentNode. 这种情况OLC是不是比较难搞啊(还得回头去锁parent?), 但ROWEX似乎更简单(原子更新parent的指针就好)
         switch (node->getType()) {
             case NTypes::N4: {
                 auto n = static_cast<N4 *>(node);
@@ -241,7 +246,7 @@ namespace ART_unsynchronized {
         this->prefixCount += node->getPrefixLength() + 1;
     }
 
-
+    //Losk: 最高位为1即为leaf
     bool N::isLeaf(const N *n) {
         return (reinterpret_cast<uint64_t>(n) & (static_cast<uint64_t>(1) << 63)) == (static_cast<uint64_t>(1) << 63);
     }
@@ -249,7 +254,8 @@ namespace ART_unsynchronized {
     N *N::setLeaf(TID tid) {
         return reinterpret_cast<N *>(tid | (static_cast<uint64_t>(1) << 63));
     }
-
+    
+    //Losk: 还得把最高位掩掉才返回
     TID N::getLeaf(const N *n) {
         return (reinterpret_cast<uint64_t>(n) & ((static_cast<uint64_t>(1) << 63) - 1));
     }
@@ -308,11 +314,10 @@ namespace ART_unsynchronized {
             return getLeaf(nextNode);
         }
 
+        //Losk: 如果没拿到Leaf,就得继续拿,总之得拿到一个Leaf才返回
         while (true) {
             node = nextNode;
-
             nextNode = getAnyChild(node);
-
             assert(nextNode != nullptr);
             if (isLeaf(nextNode)) {
                 return getLeaf(nextNode);

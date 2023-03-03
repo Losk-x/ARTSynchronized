@@ -6,7 +6,7 @@
 
 namespace ART_unsynchronized {
 
-    Tree::Tree(LoadKeyFunction loadKey) : root(new N256(nullptr, 0)), loadKey(loadKey) {
+    Tree::Tree(LoadKeyFunction loadKey) : root(new N256(nullptr, 0)), loadKey(loadKey) { //Losk: 有点意思, 默认创建是创建256作为根节点
     }
 
     Tree::~Tree() {
@@ -29,7 +29,9 @@ namespace ART_unsynchronized {
                     optimisticPrefixMatch = true;
                     // fallthrough
                 case CheckPrefixResult::Match:
-                    if (k.getKeyLen() <= level) {
+                    //Losk: 为什么是在这里判断返回0, 而不是在NoMatch的Case上? 可能只是写法的问题
+                    //另外注意等号, 因为level是当前即将判断的byte(需要取k[level]出来比较), 而k[keyLen]是取不到的
+                    if (k.getKeyLen() <= level) { 
                         return 0;
                     }
                     nextNode = N::getChild(k[level], node);
@@ -39,6 +41,7 @@ namespace ART_unsynchronized {
                     }
                     if (N::isLeaf(nextNode)) {
                         TID tid = N::getLeaf(nextNode);
+                        // 如果key还没有比完所有的byte,就需要check
                         if (level < k.getKeyLen() - 1 || optimisticPrefixMatch) {
                             return checkKey(tid, k);
                         }
@@ -49,6 +52,7 @@ namespace ART_unsynchronized {
         }
     }
 
+    //Losk?: 不太懂为啥注释掉了单线程版本的lookupRange
     bool Tree::lookupRange(const Key &, const Key &, Key &, TID [],
                                 std::size_t , std::size_t &) const {
         return false;
@@ -291,6 +295,10 @@ namespace ART_unsynchronized {
                                                            this->loadKey)) { // increases level
                 case CheckPrefixPessimisticResult::NoMatch: {
                     assert(nextLevel < k.getKeyLen()); //prevent duplicate key
+
+                    //Losk: 暂时存疑, 感觉上nextLevel-level应该是能够＞maxStoredPrefixLength的, 这种情况下只看getPrefix是否不够?
+                    //似乎prefixLength并不是任何时候都是真实的prefix长度,只是在插入的时候(两个冲突)才设置为commonPrefix的真实长度?
+                    //详见下面冲突的处理
                     // 1) Create new node which will be parent of node, Set common prefix, level to this node
                     auto newNode = new N4(node->getPrefix(), nextLevel - level);
 
@@ -303,14 +311,14 @@ namespace ART_unsynchronized {
 
                     // 4) update prefix of node
                     node->setPrefix(remainingPrefix,
-                                    node->getPrefixLength() - ((nextLevel - level) + 1));
+                                    node->getPrefixLength() - ((nextLevel - level) + 1)); //Losk: 和checkPrefixPessimistic一样.
 
                     return;
                 }
                 case CheckPrefixPessimisticResult::Match:
                     break;
             }
-            assert(nextLevel < k.getKeyLen()); //prevent duplicate key
+            assert(nextLevel < k.getKeyLen()); //prevent duplicate key //Losk?: 不太懂这个注释和assert啥意思, 为啥能prevent? 为什么要prevent?
             level = nextLevel;
             nodeKey = k[level];
             nextNode = N::getChild(nodeKey, node);
@@ -319,7 +327,8 @@ namespace ART_unsynchronized {
                 N::insertA(node, parentNode, parentKey, nodeKey, N::setLeaf(tid));
                 return;
             }
-            if (N::isLeaf(nextNode)) {
+            
+            if (N::isLeaf(nextNode)) { //Losk: 冲突了
                 Key key;
                 loadKey(N::getLeaf(nextNode), key);
 
@@ -341,6 +350,7 @@ namespace ART_unsynchronized {
         }
     }
 
+    //Losk: 暂时看到这里
     bool Tree::update(const Key &k, TID tid) {
         N *node = nullptr;
         N *nextNode = root;
@@ -442,12 +452,16 @@ namespace ART_unsynchronized {
             return CheckPrefixResult::NoMatch;
         }
         if (n->hasPrefix()) {
-            for (uint32_t i = 0; i < std::min(n->getPrefixLength(), maxStoredPrefixLength); ++i) {
+            //Losk: 为什么需要选择min(n->getPrefixLength(),maxStoredPrefixLength), 不应该是在修改的时候确保吗, 或者在getPrefixLength里确保
+            //保留真正的prefixLength有啥好处吗? 因为prefix也没存那么长.. 可能可以提前截取长度重算prefix? 但似乎没有延长prefix的结点把?(在创建结点初始化之后就一直因为冲突而减小)
+            //看下面那个if就知道了: 主要是处理本Node中实际的公共前缀更长的情况, 如果Key没那么长的公共前缀,那么也不匹配 (这部分逻辑在lookup里, match需要判断level长度), 感觉只是写法上的区别
+            for (uint32_t i = 0; i < std::min(n->getPrefixLength(), maxStoredPrefixLength); ++i) { 
                 if (n->getPrefix()[i] != k[level]) {
                     return CheckPrefixResult::NoMatch;
                 }
                 ++level;
             }
+
             if (n->getPrefixLength() > maxStoredPrefixLength) {
                 level += n->getPrefixLength() - maxStoredPrefixLength;
                 return CheckPrefixResult::OptimisticMatch;
@@ -456,29 +470,42 @@ namespace ART_unsynchronized {
         return CheckPrefixResult::Match;
     }
 
+    //Losk: NonMatchingKey和nonMatchingPrefix都是返回值
+    //其中nonMatchingKey是特定的那个不匹配的key, 而nonMatchingPrefix是当前commonPrefix中不匹配的那部分后缀(最长maxStoredPrefixLength)
     typename Tree::CheckPrefixPessimisticResult Tree::checkPrefixPessimistic(N *n, const Key &k, uint32_t &level,
                                                                         uint8_t &nonMatchingKey,
                                                                         Prefix &nonMatchingPrefix,
                                                                         LoadKeyFunction loadKey) {
-        if (n->hasPrefix()) {
+        if (n->hasPrefix()) { //Losk: 如果没有前缀就直接返回Match, 因为这个函数只检测前缀
             uint32_t prevLevel = level;
             Key kt;
             for (uint32_t i = 0; i < n->getPrefixLength(); ++i) {
                 if (i == maxStoredPrefixLength) {
-                    loadKey(N::getAnyChildTid(n), kt);
+                    //Losk: 不太懂为啥要随意拿一个child?? 这个Child还是一个Leaf,然后得loadKey得到key. 
+                    //懂了,因为能存储的prefix长度受限,但是prefixLength记录的是子树所有key真实的公共前缀长度,所以任取一个key出来比较即可.
+                    //所以这个是pessimistic,即一定要比完公共前缀.
+                    loadKey(N::getAnyChildTid(n), kt); 
                 }
-                uint8_t curKey = i >= maxStoredPrefixLength ? kt[level] : n->getPrefix()[i];
+                uint8_t curKey = i >= maxStoredPrefixLength ? kt[level] : n->getPrefix()[i]; //Losk: 注意这里level和i的细微差别
                 if (curKey != k[level]) {
-                    nonMatchingKey = curKey;
-                    if (n->getPrefixLength() > maxStoredPrefixLength) {
-                        if (i < maxStoredPrefixLength) {
-                            loadKey(N::getAnyChildTid(n), kt);
-                        }
+                    nonMatchingKey = curKey; //Losk?: 这里暂时存疑,因curKey只是一个byte,暂时不知道这个byte的作用
+                    if (n->getPrefixLength() > maxStoredPrefixLength) { //Losk:注意这里的判断与i无关
+                        if (i < maxStoredPrefixLength) { //Losk: 如果i<maxStoredPrefixLength,那么kt还未被赋值,故需赋值
+                            loadKey(N::getAnyChildTid(n), kt); 
+                        } 
+
+                        //Losk: 看下图就知道了,实际上是求最右边哪个[]的长度,也就是commonPrefix的后缀, 但最多取maxStoredPrefixLength长度
+                        //且注意level是0base的, length是1base的, 所以需要-1来对齐0base.
+                        //             |->     prefixLength    <-|
+                        //        prevLevel   level              ↓
+                        //             ↓        ↓                ↓             
+                        // [ prevLevel ][       ][               ]
                         for (uint32_t j = 0; j < std::min((n->getPrefixLength() - (level - prevLevel) - 1),
                                                           maxStoredPrefixLength); ++j) {
-                            nonMatchingPrefix[j] = kt[level + j + 1];
+                            nonMatchingPrefix[j] = kt[level + j + 1];  
                         }
                     } else {
+                        //Losk: 开始填充nonMatchingPrefix. 这个nonMatchingPrefix的意思是当前commonPrefix中,不匹配的后缀部分.
                         for (uint32_t j = 0; j < n->getPrefixLength() - i - 1; ++j) {
                             nonMatchingPrefix[j] = n->getPrefix()[i + j + 1];
                         }

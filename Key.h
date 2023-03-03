@@ -12,6 +12,8 @@ class Key {
     static constexpr uint32_t stackLen = 128;
     uint32_t len = 0;
 
+    //Losk: 没太懂data和stackKey的关系
+    //如果len>stackLen的话就从data中存字符串, 否则存在stackKey中
     uint8_t *data;
 
     uint8_t stackKey[stackLen];
@@ -60,6 +62,7 @@ inline const uint8_t &Key::operator[](std::size_t i) const {
 inline KeyLen Key::getKeyLen() const { return len; }
 
 inline Key::~Key() {
+    //Losk: 从这里看似乎是如果len>stackLen的话就从data中存字符串
     if (len > stackLen) {
         delete[] data;
         data = nullptr;
@@ -91,6 +94,7 @@ inline void Key::set(const char bytes[], const std::size_t length) {
     len = length;
 }
 
+//Losk: \0结尾字符串
 inline void Key::operator=(const char key[]) {
     if (len > stackLen) {
         delete[] data;

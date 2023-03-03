@@ -11,7 +11,10 @@ using namespace std;
 void loadKey(TID tid, Key &key) {
     // Store the key of the tuple into the key vector
     // Implementation is database specific
+
+    // Losk?: 意思是为更长的TID预留了空间.
     key.setKeyLen(sizeof(tid));
+    // Losk?: __builtin_bswap64是反转byte的意思. 可能是说反转一下就是key? 在这个例子中?
     reinterpret_cast<uint64_t *>(&key[0])[0] = __builtin_bswap64(tid);
 }
 

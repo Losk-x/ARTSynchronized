@@ -15,7 +15,7 @@
 
 using namespace ART;
 
-using TID = uint64_t;
+using TID = uint64_t; //Losk?: 这个是类似typedef吗? 
 
 namespace ART_unsynchronized {
 /*
@@ -37,7 +37,7 @@ namespace ART_unsynchronized {
     using Prefix = uint8_t[maxStoredPrefixLength];
 
     class N {
-    protected:
+    protected: //Losk?: protected的语义? 为什么用?
         N(NTypes type, const uint8_t *prefix, uint32_t prefixLength) {
             setType(type);
             setPrefix(prefix, prefixLength);
@@ -45,17 +45,18 @@ namespace ART_unsynchronized {
 
         N(const N &) = delete;
 
-        N(N &&) = delete;
+        N(N &&) = delete; //Losk?: 给我带来了C++恐惧症,但是还是需要再查吧
 
+        //Losk?: 似乎是用来做同步的? 但实际看setPrefix好像prefixCount=prefixLength
         // version 1, unlocked, not obsolete
         uint32_t prefixCount = 0;
 
         NTypes type;
     public:
+        //Losk?: 这个count啥作用?
         uint8_t count = 0;
     protected:
         Prefix prefix;
-
 
         void setType(NTypes type);
 
@@ -64,14 +65,6 @@ namespace ART_unsynchronized {
         NTypes getType() const;
 
         uint32_t getCount() const;
-
-        static N *getChild(const uint8_t k, N *node);
-
-        static void insertA(N *node, N *parentNode, uint8_t keyParent, uint8_t key, N *val);
-
-        static void change(N *node, uint8_t key, N *val);
-
-        static void removeA(N *node, uint8_t key, N *parentNode, uint8_t keyParent);
 
         bool hasPrefix() const;
 
@@ -82,6 +75,19 @@ namespace ART_unsynchronized {
         void addPrefixBefore(N *node, uint8_t key);
 
         uint32_t getPrefixLength() const;
+
+        // Static Methods
+        
+        static N *getChild(const uint8_t k, N *node);
+
+        //Losk?: 不太懂这个奇怪的函数, 为啥还有keyParent? keyParent是用来定位parentNode中的位置吗还是啥?
+        //Losk: InsertA即insert+grow, 如果满了就grow. 所以需要parentNode以及当前node在parentNode的keyParent.
+        static void insertA(N *node, N *parentNode, uint8_t keyParent, uint8_t key, N *val);
+
+        //Losk: change的语义是, 更改node中对应key的slot, 赋值其为val.
+        static void change(N *node, uint8_t key, N *val);
+
+        static void removeA(N *node, uint8_t key, N *parentNode, uint8_t keyParent);
 
         static TID getLeaf(const N *n);
 
